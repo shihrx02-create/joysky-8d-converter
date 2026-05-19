@@ -121,13 +121,21 @@ def cell_text(el: ET.Element) -> str:
     return "".join(parts).strip()
 
 
-def set_cell_text(tc: ET.Element, text: str) -> None:
-    """Replace cell contents while preserving cell properties."""
+def set_cell_text(tc: ET.Element, text: str, align: str | None = None) -> None:
+    """Replace cell contents while preserving cell properties.
+
+    align can be "center", "left", or "right" and applies to the paragraph.
+    Newline characters are written as Word line breaks inside the same cell.
+    """
     tc_pr = tc.find("w:tcPr", NS)
     for child in list(tc):
         if child is not tc_pr:
             tc.remove(child)
     p = ET.SubElement(tc, W + "p")
+    if align:
+        p_pr = ET.SubElement(p, W + "pPr")
+        jc = ET.SubElement(p_pr, W + "jc")
+        jc.set(W + "val", align)
     for pi, paragraph in enumerate(str(text).split("\n")):
         if pi:
             r_br = ET.SubElement(p, W + "r")
@@ -229,6 +237,16 @@ def extract_counts(d1: str) -> Tuple[str, str]:
     return total, bad
 
 
+def format_numbered_points(text: str) -> str:
+    """Put numbered points such as 1. 2. 3. on separate lines for Word output."""
+    text = clean(text)
+    # Insert a line break before every numbered marker that is not already at line start.
+    text = re.sub(r"\s+(?=(?:\d+)[\.)]\s+)", "\n", text)
+    # If the AI returned semicolon-separated numbered items, still split cleanly.
+    text = re.sub(r";\s*(?=(?:\d+)[\.)]\s+)", "\n", text)
+    return text.strip()
+
+
 def english_sections(data: Dict[str, str]) -> Dict[str, str]:
     """Rule-based English rewrite for Joysky corrective-action wording.
 
@@ -248,14 +266,13 @@ def english_sections(data: Dict[str, str]) -> Dict[str, str]:
         elif bad:
             count_phrase = f", approximately {bad} pieces had oversized openings"
         content = (
-            f"The customer reported that during assembly over the past two weeks{count_phrase}. "
-            f"The opening dimension was significantly larger than the specified range of {spec_range}, allowing the screws to move freely in and out of the button. "
-            "The customer also observed that the openings were oval-shaped rather than perfectly round, and considered this to be the root cause of the issue."
+            f"The openings were significantly larger than the specified range of {spec_range}, allowing the screws to move freely in and out of the button. "
+            "The openings were also observed to be oval-shaped rather than perfectly round."
         )
         if defect_rate:
             content += f" The defect rate was approximately {defect_rate}."
     else:
-        content = "The customer reported a nonconformity during assembly/inspection. The reported condition has been reviewed and summarized based on the submitted 8D information."
+        content = "The reported nonconforming condition was identified during assembly/inspection."
 
     if "夾持偏擺" in d3 or "定位點" in d3:
         analysis = (
@@ -329,7 +346,7 @@ def ai_english_sections(data: Dict[str, str]) -> Dict[str, str]:
             "Use professional manufacturing/customer corrective-action English.",
             "Do not invent facts, dates, quantities, root causes, customer names, or commitments not present in the Chinese source.",
             "Keep the wording concise but complete enough for a customer-facing corrective action form.",
-            "Content = D1 problem description.",
+            "Content = only the actual defect/nonconforming condition from D1. Do not include customer background, time period, quantities unless needed to describe the defect, suspected root cause, or long narrative.",
             "Analysis = D3 root cause analysis.",
             "Solution = D6 permanent corrective action + D7 recurrence prevention, without duplicating training details unless needed.",
             "Confirm = D5 corrective action verification + D8 closure/effectiveness tracking.",
@@ -372,7 +389,7 @@ def ai_english_sections(data: Dict[str, str]) -> Dict[str, str]:
     missing = [k for k in required if not clean(str(sections.get(k, "")))]
     if missing:
         raise ValueError(f"AI response missing required fields: {', '.join(missing)}")
-    return {k: clean(str(sections[k])) for k in required}
+    return {k: format_numbered_points(str(sections[k])) for k in required}
 
 
 def build_english_sections(data: Dict[str, str]) -> Dict[str, str]:
@@ -431,12 +448,12 @@ def fill_template(chinese_docx: Path, customer_no: str, lister: str, out_path: P
         for row_idx, key in [(6, "content"), (8, "analysis"), (10, "solution"), (12, "confirm"), (14, "instructions")]:
             cells = rows[row_idx].findall("w:tc", NS)
             if len(cells) >= 2:
-                set_cell_text(cells[1], sections[key])
+                set_cell_text(cells[1], format_numbered_points(sections[key]))
 
         # Lister name goes under the lister label; other names remain blank.
         cells = rows[7].findall("w:tc", NS)
         if len(cells) >= 3:
-            set_cell_text(cells[2], lister)
+            set_cell_text(cells[2], lister, align="center")
         for idx in [9, 11, 13]:
             cells = rows[idx].findall("w:tc", NS)
             if len(cells) >= 3:
