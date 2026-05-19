@@ -1,0 +1,2 @@
+# No required third-party Python packages for the prototype.
+# Uses Python standard library only.
