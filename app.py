@@ -17,6 +17,7 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import tempfile
 import uuid
 import urllib.error
@@ -37,6 +38,8 @@ UPLOAD_DIR = BASE_DIR / "uploads"
 OUTPUT_DIR.mkdir(exist_ok=True)
 UPLOAD_DIR.mkdir(exist_ok=True)
 
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
+
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 W = "{%s}" % NS["w"]
 ET.register_namespace("w", NS["w"])
@@ -54,6 +57,52 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip()
 USE_AI = os.environ.get("USE_AI", "1").strip().lower() not in {"0", "false", "no"}
+
+
+def ensure_docx(path: Path) -> Path:
+    """Return a .docx path. Legacy .doc uploads are converted first.
+
+    macOS local development uses `textutil`; Linux/cloud uses LibreOffice (`soffice` or
+    `libreoffice`). If neither exists, tell the user exactly what is missing.
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".docx":
+        return path
+    if suffix != ".doc":
+        raise ValueError("請上傳 Word 檔，格式限 .doc 或 .docx。")
+
+    out_dir = path.parent / f"converted_{uuid.uuid4().hex}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if soffice:
+        result = subprocess.run(
+            [soffice, "--headless", "--convert-to", "docx", "--outdir", str(out_dir), str(path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=90,
+        )
+        converted = out_dir / f"{path.stem}.docx"
+        if result.returncode == 0 and converted.exists():
+            return converted
+        raise ValueError(f".doc 轉換失敗，請改上傳 .docx。LibreOffice 訊息：{result.stderr or result.stdout}")
+
+    textutil = shutil.which("textutil")
+    if textutil:
+        converted = out_dir / f"{path.stem}.docx"
+        result = subprocess.run(
+            [textutil, "-convert", "docx", str(path), "-output", str(converted)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=90,
+        )
+        if result.returncode == 0 and converted.exists():
+            return converted
+        raise ValueError(f".doc 轉換失敗，請改上傳 .docx。textutil 訊息：{result.stderr or result.stdout}")
+
+    raise ValueError("目前伺服器缺少 .doc 轉換工具，請安裝 LibreOffice，或先將檔案另存為 .docx 再上傳。")
 
 
 def cell_text(el: ET.Element) -> str:
@@ -335,6 +384,11 @@ def build_english_sections(data: Dict[str, str]) -> Dict[str, str]:
 
 
 def fill_template(chinese_docx: Path, customer_no: str, lister: str, out_path: Path) -> Dict[str, str]:
+    if not TEMPLATE_PATH.exists():
+        raise FileNotFoundError(
+            "找不到內建英文模板 templates_docx/corrective_action_template.docx。"
+            "請確認部署時有一起上傳 templates_docx 資料夾與裡面的 corrective_action_template.docx。"
+        )
     data = parse_chinese_8d(chinese_docx)
     sections = build_english_sections(data)
     today = datetime.now().strftime("%Y/%m/%d")
@@ -394,7 +448,7 @@ PAGE = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>8D Corrective Action Converter</title>
+  <title>8D 矯正措施轉換工具</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#f6f7fb; color:#1f2937; margin:0; }
     .wrap { max-width: 760px; margin: 48px auto; padding: 0 20px; }
@@ -413,28 +467,28 @@ PAGE = """<!doctype html>
 <body>
 <div class="wrap">
   <div class="card">
-    <h1>8D Corrective Action Converter</h1>
-    <div class="sub">上傳中文 8D，系統會用內建英文模板產出 Corrective Action Word。</div>
+    <h1>8D 矯正措施轉換工具</h1>
+    <div class="sub">上傳中文 8D Word，系統會自動翻譯並套入內建英文 Corrective Action 模板。</div>
     {error}
     <form method="post" action="/convert" enctype="multipart/form-data">
-      <label>Access Password</label>
-      <input name="password" type="password" placeholder="公司內部密碼；如果未設定可留空">
+      <label>內部密碼</label>
+      <input name="password" type="password" placeholder="請輸入公司內部使用密碼">
 
-      <label>Customer No.</label>
+      <label>客戶編號 Customer No.</label>
       <input name="customer_no" placeholder="例如：001044" required>
 
-      <label>Lister</label>
+      <label>製表人 Lister</label>
       <select name="lister">
         <option>Grace Shih</option>
         <option>Rita Lin</option>
         <option>Joy Lin</option>
       </select>
 
-      <label>Chinese 8D Report (.docx)</label>
-      <input type="file" name="report" accept=".docx" required>
-      <div class="hint">不需要上傳英文模板；模板已內建。</div>
+      <label>中文 8D 報告 Word 檔（.doc / .docx）</label>
+      <input type="file" name="report" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required>
+      <div class="hint">只需要上傳中文 8D；英文 Corrective Action 模板已內建。</div>
 
-      <button type="submit">Generate English Corrective Action</button>
+      <button type="submit">產生英文 Corrective Action Word</button>
     </form>
     <div class="rules">
       <b>AI 翻譯：</b>如果伺服器有設定 OPENAI_API_KEY，會用 AI 產生正式英文；如果沒有設定或 AI 失敗，會自動改用規則式備援，避免工具不能用。<br>
@@ -477,18 +531,26 @@ class Handler(BaseHTTPRequestHandler):
             if APP_PASSWORD:
                 supplied_password = str(form.getfirst("password", "")).strip()
                 if not secrets.compare_digest(supplied_password, APP_PASSWORD):
-                    raise ValueError("Access password 不正確。")
+                    raise ValueError("內部密碼不正確。")
             customer_no = str(form.getfirst("customer_no", "")).strip()
             lister = str(form.getfirst("lister", LISTER_OPTIONS[0])).strip()
             item = form["report"] if "report" in form else None
             if not customer_no or item is None or not getattr(item, "filename", ""):
-                raise ValueError("請填 Customer No. 並上傳中文 8D Word 檔。")
-            safe_upload = UPLOAD_DIR / f"upload_{uuid.uuid4().hex}.docx"
+                raise ValueError("請填寫客戶編號，並上傳中文 8D Word 檔。")
+            original_name = str(getattr(item, "filename", ""))
+            suffix = Path(original_name).suffix.lower()
+            if suffix not in {".doc", ".docx"}:
+                raise ValueError("請上傳 Word 檔，格式限 .doc 或 .docx。")
+            safe_upload = UPLOAD_DIR / f"upload_{uuid.uuid4().hex}{suffix}"
             with safe_upload.open("wb") as f:
                 shutil.copyfileobj(item.file, f)
+            if safe_upload.stat().st_size > MAX_UPLOAD_BYTES:
+                safe_upload.unlink(missing_ok=True)
+                raise ValueError("檔案太大，請上傳 20MB 以下的 Word 檔。")
+            source_docx = ensure_docx(safe_upload)
             out_name = f"Corrective_Action_{customer_no}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
             out_path = OUTPUT_DIR / out_name
-            fill_template(safe_upload, customer_no, lister, out_path)
+            fill_template(source_docx, customer_no, lister, out_path)
             self.send_response(303)
             self.send_header("Location", f"/download/{out_name}")
             self.end_headers()
@@ -513,7 +575,7 @@ def main() -> None:
     parser.add_argument("--serve", action="store_true", help="start local web server")
     parser.add_argument("--host", default="127.0.0.1", help="host to bind, use 0.0.0.0 for cloud/LAN")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8787")))
-    parser.add_argument("--input", type=Path, help="Chinese 8D .docx for CLI conversion")
+    parser.add_argument("--input", type=Path, help="Chinese 8D .doc/.docx for CLI conversion")
     parser.add_argument("--customer-no", default="001044")
     parser.add_argument("--lister", default="Grace Shih", choices=LISTER_OPTIONS)
     parser.add_argument("--output", type=Path)
@@ -527,7 +589,7 @@ def main() -> None:
     if not args.input:
         parser.error("use --serve or provide --input")
     out = args.output or OUTPUT_DIR / f"Corrective_Action_{args.customer_no}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
-    info = fill_template(args.input, args.customer_no, args.lister, out)
+    info = fill_template(ensure_docx(args.input), args.customer_no, args.lister, out)
     print(out)
     print("Parsed:")
     for k in ["date", "customer_no", "lister", "js_pn", "po_no", "part_no", "sc_no", "drawing", "qty"]:

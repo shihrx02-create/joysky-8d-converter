@@ -9,7 +9,7 @@ A webpage with:
 - Access Password
 - Customer No.
 - Lister dropdown: Grace Shih / Rita Lin / Joy Lin
-- Chinese 8D Report upload
+- Chinese 8D Report upload (`.doc` / `.docx`)
 - Generate button
 
 The English template is built in. Users do not upload it.
@@ -83,7 +83,7 @@ Share that URL plus the internal password with users.
 2. Enter the access password.
 3. Enter Customer No., e.g. `001044`.
 4. Select lister.
-5. Upload a Chinese 8D `.docx`.
+5. Upload a Chinese 8D `.doc` or `.docx`.
 6. Download the generated English Word.
 7. Check that these fields are filled:
    - Date = today

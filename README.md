@@ -8,7 +8,7 @@ A small web tool that converts a Chinese Joysky 8D Word report into an English C
 2. Enter the internal access password if configured
 3. Enter `Customer No.`
 4. Select `Lister` (`Grace Shih`, `Rita Lin`, or `Joy Lin`)
-5. Upload the Chinese 8D `.docx`
+5. Upload the Chinese 8D `.doc` or `.docx`
 6. Download the generated English Corrective Action `.docx`
 
 Users do **not** upload the English template; it is built in at:
@@ -108,7 +108,7 @@ This folder includes `render.yaml`.
 
 ```bash
 python3 app.py \
-  --input /path/to/chinese_8d.docx \
+  --input /path/to/chinese_8d.doc_or_docx \
   --customer-no 001044 \
   --lister 'Grace Shih' \
   --output outputs/test.docx
