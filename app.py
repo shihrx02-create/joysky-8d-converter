@@ -32,7 +32,11 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from xml.etree import ElementTree as ET
 
 BASE_DIR = Path(__file__).resolve().parent
-TEMPLATE_PATH = BASE_DIR / "templates_docx" / "corrective_action_template.docx"
+TEMPLATE_PATHS = [
+    BASE_DIR / "templates_docx" / "corrective_action_template.docx",
+    # Fallback for GitHub web uploads where the template was placed at repo root.
+    BASE_DIR / "corrective_action_template.docx",
+]
 OUTPUT_DIR = BASE_DIR / "outputs"
 UPLOAD_DIR = BASE_DIR / "uploads"
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -383,18 +387,24 @@ def build_english_sections(data: Dict[str, str]) -> Dict[str, str]:
         return sections
 
 
+def get_template_path() -> Path:
+    for path in TEMPLATE_PATHS:
+        if path.exists():
+            return path
+    expected = " 或 ".join(str(p.relative_to(BASE_DIR)) for p in TEMPLATE_PATHS)
+    raise FileNotFoundError(
+        f"找不到內建英文模板。請確認部署時有上傳以下任一位置：{expected}"
+    )
+
+
 def fill_template(chinese_docx: Path, customer_no: str, lister: str, out_path: Path) -> Dict[str, str]:
-    if not TEMPLATE_PATH.exists():
-        raise FileNotFoundError(
-            "找不到內建英文模板 templates_docx/corrective_action_template.docx。"
-            "請確認部署時有一起上傳 templates_docx 資料夾與裡面的 corrective_action_template.docx。"
-        )
+    template_path = get_template_path()
     data = parse_chinese_8d(chinese_docx)
     sections = build_english_sections(data)
     today = datetime.now().strftime("%Y/%m/%d")
     lister = lister if lister in LISTER_OPTIONS else LISTER_OPTIONS[0]
 
-    with ZipFile(TEMPLATE_PATH, "r") as zin:
+    with ZipFile(template_path, "r") as zin:
         root = ET.fromstring(zin.read("word/document.xml"))
         tbl = root.findall(".//w:tbl", NS)[0]
         rows = tbl.findall("w:tr", NS)
